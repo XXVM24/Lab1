@@ -1,0 +1,58 @@
+#include<stdio.h>
+#include<pthread.h>
+#include<unistd.h>
+#include<x86intrin.h>
+#include<stdint.h>
+#include<sched.h>
+
+uint64_t measure_cache(uint8_t *addr){
+    uint64_t start, end;
+    uint32_t junk = 0;
+    start = __rdtsc();
+    for(int i = 0; i < 256; i++){
+        __asm__ __volatile__ ("addl (%0),%1"
+            : "+r"(addr), "+r"(junk)
+            :
+            : "memory"
+        );
+    }
+    end = __rdtsc();
+    return (end - start);
+}
+
+void *victim_idle(void *arg){
+    // Victim does nothing
+    while(1)
+        usleep(1000);
+    return NULL;
+}
+
+int main(){
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(0, &cpuset);
+
+    pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+    pthread_t victim_thread;
+    pthread_create(&victim_thread, NULL, victim_idle, NULL);
+
+    uint8_t data[4096];
+    uint8_t *target_address = &data[0];
+
+    FILE *file = fopen("cachebleed_v1.csv", "w");
+    if(file == NULL){
+        printf("no file!");
+        return 1;
+    }
+    fprintf(file, "time cycle\n");
+    for(int i = 0; i < 1000; i++){
+        uint64_t cycles_taken = measure_cache(target_address);
+        printf("cycle taken:%llu\n", cycles_taken);
+        fprintf(file, "%llu\n", cycles_taken);
+    }
+    fclose(file);
+
+    pthread_cancel(victim_thread);
+    pthread_join(victim_thread, NULL);
+    return 0;
+}

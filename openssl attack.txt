@@ -1,0 +1,88 @@
+import time
+import numpy as np
+from scipy.signal import butter, lfilter
+from Crypto.PublicKey import RSA
+from Crypto.Cipher import PKCS1_OAEP
+
+# 生成RSA密钥
+key = RSA.generate(2048)
+cipher = PKCS1_OAEP.new(key)
+data = b"Sensitive Data"
+ciphertext = cipher.encrypt(data)
+print("private key:{}".format(key.d))
+print("private key(bin):{}".format(bin(key.d)))
+binary_d = bin(key.d)[2:]
+print("private key(bin):{}".format(binary_d))
+
+def victim_rsa_decrypt(ciphertext):
+    """模拟RSA解密过程"""
+    cipher = PKCS1_OAEP.new(key)
+    return cipher.decrypt(ciphertext)
+
+def flush_reload(address):
+    """测量缓存访问时间"""
+    start = time.perf_counter()
+    victim_rsa_decrypt(ciphertext)  # 执行解密操作
+    end = time.perf_counter()
+    return end - start  # 返回缓存访问时间
+def collect_traces(sensitive_addresses):
+    """收集攻击数据，测量多个敏感地址的缓存访问时间"""
+    traces = []
+    for _ in range(8000):  # 收集5000次样本
+        trace = []
+        for address in sensitive_addresses:
+            time_taken = flush_reload(address)
+            trace.append(time_taken)
+        traces.append(trace)
+    return traces
+
+def averaged_traces(traces):
+    """计算多次测量的平均值"""
+    return np.mean(traces, axis=0)
+
+def low_pass_filter(data, cutoff=0.1, fs=1.0, order=5):
+    """低通滤波器，去除高频噪声"""
+    nyq = 0.5 * fs
+    normal_cutoff = cutoff / nyq
+    b, a = butter(order, normal_cutoff, btype='low', analog=False)
+    return lfilter(b, a, data)
+# 模拟多个缓存行的敏感地址
+sensitive_addresses = [hex(0x1000 + i) for i in range(8)]
+
+# 收集攻击数据
+traces = collect_traces(sensitive_addresses)
+
+# 平均化并进行低通滤波
+averaged = averaged_traces(traces)
+filtered = low_pass_filter(averaged)
+
+# 进行频率分析
+fft_result = frequency_analysis(filtered)
+
+# 对齐和归一化
+aligned_traces = align_and_normalize(traces)
+
+np.savetxt("raw_traces.csv", np.array(traces), delimiter=",")
+print("Average Trace:", averaged)
+print("Filtered Trace:", filtered)
+print("FFT Result:", fft_result)
+# 基于缓存访问时间的分析，进行密钥位预测
+predicted_bits = []
+for i, trace in enumerate(filtered):
+    threshold = np.mean(filtered) * 1.03  # 设置阈值（可以根据实际情况调整）
+    print(f"Trace {i}, Threshold: {threshold}")
+    if trace > threshold:
+        predicted_bit = 1  # 根据阈值判断预测的密钥位
+    else:
+        predicted_bit = 0
+    predicted_bits.append(predicted_bit)
+
+    print(f"Address: {sensitive_addresses[i]}, Time: {trace}, Predicted Key Bit: {predicted_bit}")
+
+actual_bits = binary_d[:len(predicted_bits)]
+print("predicted bit:{}".format(predicted_bits))
+print("actual bit:{}".format(list(map(int, actual_bits))))
+
+correct = sum(p == int(a) for p, a in zip(predicted_bits, actual_bits))
+accuracy = correct / len(predicted_bits)
+print("accuracy:{:.2f}%".format(accuracy * 100))

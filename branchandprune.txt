@@ -1,0 +1,99 @@
+import time
+import mmap
+import os
+import numpy as np
+import random
+from sympy import mod_inverse
+
+##measure cache time,get start and end time
+def measure_cache(bin_address):
+    base_time=100+(bin_address%2)*0.1
+    noise=random.uniform(-0.05,0.05)
+    return base_time+noise
+
+##attack code,it measure access time,in every 8 bin,measure time
+def collect_traces(samples=10000,bins=64):
+    traces=np.zeros((samples,bins))
+    for sample in range(samples):
+        for bin_address in range(bins):
+            traces[sample][bin_address]=measure_cache(bin_address)
+        if sample%1000==0:
+            print("collected {}/{} sample".format(sample,samples))
+    return traces
+
+def analyze_traces(traces):
+    averaged_traces=np.mean(traces,axis=0)
+    threshold=np.mean(averaged_traces)
+    print("dynamic threshold:",threshold)
+    bin_estimates={}
+
+    for bin_address in range(len(averaged_traces)) :
+        if averaged_traces[bin_address]>threshold:
+            bin_estimates[bin_address]="101"
+        else:
+            bin_estimates[bin_address]="011"
+    return bin_estimates
+def branch_and_prune(known_bits,total_bits,e,phi):
+    candidates=[bin(i)[2:].zfill(total_bits) for i in range(2 ** total_bits)]
+    print("initial candidate:",candidates)
+
+    for bit_pos in range(total_bits):
+        pruned_candidates=[]
+        for candidate in candidates:
+            if bit_pos in known_bits:
+                known_bit=known_bits.get(bit_pos,None)
+                # if known_bit and candidate[-len(known_bit):]!=known_bit:
+                #    print("pruned candidate due to known bits:",candidate)
+                #    continue
+            if is_valid(candidate,e,phi):
+                pruned_candidates.append(candidate)
+
+        print("after bit position{},remaining candidate:{}".format(bit_pos,len(pruned_candidates)))
+        candidates=pruned_candidates
+    return candidates
+
+def is_valid(candidate,e,phi):
+    ##d*e=1(mod o/(N))
+    try:
+        d=int(candidate,2)
+        result=(d*e)%phi
+        print("testing candidate:{},result:{}".format(candidate,result))
+        return result==1
+
+    except ValueError:
+        ##print("value for candidate {}:{}".format(candidate,ve))
+        return False
+def main():
+    samples=10000
+    bins=64
+    print("collect trace....")
+    traces=collect_traces(samples,bins)
+
+    print("analyze trace....")
+    bin_estimates=analyze_traces(traces)
+    print("recovered lowest bits for bins:")
+    for bin_address,value in bin_estimates.items():
+        print("bin {}:{}".format(bin_address,value))
+
+    known_bits={i:bin_estimates[i] for i in range(len(bin_estimates))}
+    print("known_bit:")
+    print(known_bits)
+    total_bits=16
+
+    e=65537
+    phi=123456
+
+    print("running branch_and_prune...")
+    candidates=branch_and_prune(known_bits,total_bits,e,phi)
+    print("recovered RSA private keys:")
+    for candidate in candidates:
+        print(int(candidate,2))
+        print(int(candidate))
+
+    actual=mod_inverse(e,phi)
+    #if (candidate,2)==actual:
+    #    print("success!recovered key matches the actual key.")
+    print("actual key(decimal):{}".format(actual))
+
+if __name__=="__main__":
+    main()
